@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/adal"
 
 	"gopkg.in/retry.v1"
+	"github.com/gofrs/flock"
 )
 
 type TokenCache interface {
@@ -19,6 +20,13 @@ type TokenCache interface {
 type defaultTokenCache struct{}
 
 func (*defaultTokenCache) Read(file string) (adal.Token, error) {
+	l := flock.New(file)
+	if err := l.RLock(); err != nil {
+		return adal.Token{}, err
+	}
+
+	defer l.Unlock()
+
 	_, err := os.Stat(file)
 	if os.IsNotExist(err) {
 		return adal.Token{}, nil
@@ -38,6 +46,12 @@ func (*defaultTokenCache) Write(file string, token adal.Token) error {
 	}
 
 	for attempt := attempts.Start(nil); attempt.Next(); {
+		l := flock.New(file)
+		if err := l.Lock(); err != nil && attempt.More() {
+			continue
+		}
+
+		defer l.Unlock()
 		err := adal.SaveToken(file, 0700, token)
 
 		if err != nil && attempt.More() {
